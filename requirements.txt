@@ -1,3 +1,6 @@
+alive-progress
 argparse
+pandas
+tabulate
+urllib3
 requests
-yaspin
