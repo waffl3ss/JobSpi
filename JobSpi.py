@@ -2,7 +2,10 @@
 
 from __future__ import division
 from argparse import RawTextHelpFormatter
-import json, math, argparse, sys, os, urllib3, requests, getpass, yaspin, time, logging, re
+from alive_progress import alive_bar
+from tabulate import tabulate
+import pandas as pd
+import json, math, argparse, sys, os, urllib3, requests, getpass, time, logging, re
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -12,7 +15,7 @@ banner = r"""
     |   |/  _ \| __ \ \____  \   _ \|  |
 /\__|   (  (_) ) \_\ \/       \ |_) |  |
 \_______|\____/|___  /______  /  __/|__|
-   v0.3            \/       \/|_|       
+   v0.5            \/       \/|_|       
         Author: #Waffl3ss"""
 print(banner + '\n')
 
@@ -30,9 +33,8 @@ parser.add_argument('--logretry', dest='loginRetryAmount', required=False, defau
 parser.add_argument('--secretry', dest='linkedInRetryAmount', required=False, default=10, help="Amount of times to attempt the LinkedIn Security bypass")
 parser.add_argument('--debug', dest='debugMode', required=False, default=False, help="Turn on debug mode for error output", action="store_true")
 parser.add_argument('--proxy', dest='proxy', required=False, default='', help="Proxy to use for requests")
+parser.add_argument('--csv', dest='outputCSV', required=False, default='', help="Output to CSV file", action="store_true")
 args = parser.parse_args()
-
-
 
 # Assign user arguments to variables we can use (old habit of mine)
 company = str(args.company) # String
@@ -46,24 +48,17 @@ linkedin_password = str(args.linkedin_password) # String
 debugMode = args.debugMode # Bool
 linkedInRetryAmount = int(args.linkedInRetryAmount) # Int
 loginRetryAmount = int(args.loginRetryAmount) # Int
+proxy = str(args.proxy) # String
+outputCSV = args.outputCSV # String
 retrySecCheck = 1
 retryLILogin = 1
 user_agent = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0'
 linkedinEmployeeList = []
-linkedinEmployeeInfo = []
-linkedinEmployeeInfoUniq = []
-proxy = str(args.proxy) # String
 
 if proxy != '':
-    proxies = {
-        "http": f"http://{proxy}",
-        "https": f"http://{proxy}"
-    }   
+    proxies = {"http": f"http://{proxy}", "https": f"http://{proxy}"}   
 else:
-    proxies = {
-        "http": "",
-        "https": ""
-    }   
+    proxies = {"http": "", "https": ""}   
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='jobspi.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -87,84 +82,20 @@ if outputfile == '' and not printnames:
     logger.error("No output option select, choose an output file (-o) or print to screen (-pn) and try again...")
     sys.exit()
 
-def parseProfileData(full_name, json_data):
-    try:
-        included = json_data.get('included', [])
-        for item in included:
-            top_components = item.get('topComponents', [])
-            for idx, component in enumerate(top_components):
-                components = component.get('components', {})
-                header_component = components.get('headerComponent', {})
-                if header_component and isinstance(header_component, dict):
-                    title = header_component.get('title')
-                    if title and isinstance(title, dict):
-                        text_value = title.get('text')
-                        if text_value and text_value.lower() == "experience":
-                            if idx + 1 < len(top_components):
-                                next_component = top_components[idx + 1]
-                                try:
-                                    dict1 = next_component['components']['fixedListComponent']['components'][0]
-                                except:
-                                    logger.debug(f"No employment history found for {full_name}")
-                                    return 'Err', 'Err', 'Err'
-                                try:
-                                    jobTitle = dict1['components']['entityComponent']['subComponents']['components'][0]['components']['entityComponent']['titleV2']['text']['text']
-                                except:
-                                    jobTitle = 'N/A'
-                                try:
-                                    companyName = dict1['components']['entityComponent']['titleV2']['text']['text']
-                                except:
-                                    companyName = 'N/A'
-                                try:
-                                    companyLengthInitial = dict1['components']['entityComponent']['subtitle']['text']
-                                    time_part = re.split(r'·|\u00b7', companyLengthInitial)[-1].strip()
-                                    years = re.search(r'(\d+)\s*yr', time_part)
-                                    months = re.search(r'(\d+)\s*mo', time_part)
-                                    years = int(years.group(1)) if years else None
-                                    months = int(months.group(1)) if months else None
-                                    output = []
-                                    if years is not None:
-                                        output.append(f"{years} yr{'s' if years != 1 else ''}")
-                                    if months is not None:
-                                        output.append(f"{months} mo{'s' if months != 1 else ''}")
-                                    companyLength = " ".join(output) if output else "Less than a month (or there was an error)"
-                                    #companyLength = "N/A" #it can have an error getting the length sometimes...
-                                except:
-                                    companyLength = 'N/A'
-
-                            if companyName == 'N/A' or jobTitle == 'N/A':
-                                companyName, jobTitle = jobTitle, companyName # Sometimes if it cant find the company name it messes up the order
-                                
-                            return jobTitle, companyName, companyLength
-    except:
-        logger.debug(f"No experience card found for {full_name}")
-        return 'Err', 'Err', 'Err' 
-
 def jobspiGen(companyid):
-    global retrySecCheck
-    global retryLILogin
-    if retrySecCheck >= linkedInRetryAmount:
-        logger.error(f'LinkedIn Security Check Implemented, {linkedInRetryAmount} retries attemped and failed. Please use the README for more info.')
-        sys.exit(0)
-
-    if retryLILogin >= loginRetryAmount:
-        logger.error(f'Attempted to login to LinkedIn {loginRetryAmount} times with no success. Please use the README for more info. ')
-        sys.exit(0)
-
-    try:
-        # Create Login Session and Hold Cookies
+    global retrySecCheck, retryLILogin
+    flattened_data = []
+    while retrySecCheck < linkedInRetryAmount:
         linkedinSession = requests.Session()
         linkedinSession.headers.update({'User-Agent': user_agent})
         linkedinSession.get('https://www.linkedin.com/uas/login?trk=guest_homepage-basic_nav-header-signin', verify=False, proxies=proxies, allow_redirects=True)
 
-        # Get CSRF cookie
         for cookie in linkedinSession.cookies:
             if cookie.name == "bcookie":
                 csrfCookie = str(cookie.value.split('&')[1][:-1])
                 if csrfCookie is None:
                     logger.error('Failed to pull CSRF token')
 
-        # Conduct Login and Store in Session
         loginData = {"session_key": linkedin_username, "session_password": linkedin_password, "isJsEnabled": "false", "loginCsrfParam": csrfCookie}
         loginRequest = linkedinSession.post("https://www.linkedin.com/checkpoint/lg/login-submit", data=loginData, timeout=timeout, verify=False, proxies=proxies, allow_redirects=True)
 
@@ -172,120 +103,217 @@ def jobspiGen(companyid):
             retrySecCheck += 1
             logger.debug(f'LinkedIn Security Check Bypass Attempt #{retrySecCheck}')
             time.sleep(sleep)
-            jobspiGen(companyid)
-        else:
-            if 'li_at' in linkedinSession.cookies.get_dict():
-                logger.debug('LinkedIn Login Successful')
-            else:
-                retryLILogin += 1
-                logger.debug(f'LinkedIn Login Unsuccessful... Retrying attempt #{retryLILogin}')
-                time.sleep(sleep)
-                jobspiGen(companyid)
-        
-        specialCookieList = ''
-        for cookie in linkedinSession.cookies:
-            if cookie.name == "JSESSIONID":
-                ajaxcookie = cookie.value[1:-1]
-            specialCookieList += cookie.name + "=" + cookie.value + "; "
+            continue
+        if 'li_at' not in linkedinSession.cookies.get_dict():
+            retryLILogin += 1
+            if retryLILogin >= loginRetryAmount:
+                logger.error(f'Login failed after {loginRetryAmount} attempts, Please use the README for more info.')
+                sys.exit()
+            logger.debug(f'LinkedIn Login Unsuccessful... Retrying with attempt #{retryLILogin}')
+            time.sleep(sleep)
+            continue
+        if "li_at" in linkedinSession.cookies.get_dict():
+            logger.debug('LinkedIn Login Successful')
+            break
+    
+    specialCookieList = ''
+    for cookie in linkedinSession.cookies:
+        if cookie.name == "JSESSIONID":
+            ajaxcookie = cookie.value[1:-1]
+        specialCookieList += cookie.name + "=" + cookie.value + "; "
 
-        linkedinSession.headers.update({
-            "Host": "www.linkedin.com",
-            "User-Agent": user_agent,
-            "Accept": "application/vnd.linkedin.normalized+json+2.1",
-            "x-restli-protocol-version": "2.0.0",
-            "Cookie": specialCookieList,
-            "Csrf-Token": ajaxcookie,
-            })
+    linkedinSession.headers.update({
+        "Host": "www.linkedin.com",
+        "User-Agent": user_agent,
+        "Accept": "application/vnd.linkedin.normalized+json+2.1",
+        "x-restli-protocol-version": "2.0.0",
+        "Cookie": specialCookieList,
+        "Csrf-Token": ajaxcookie,
+        })
 
-        if (companyid == '' or companyid is None):
-            logger.info("Pulling Company ID for {:s}".format(company.strip()))
+    if (companyid == '' or companyid is None):
+        logger.info("Pulling Company ID for {:s}".format(company.strip()))
 
-            query = "includeWebMetadata=true&variables=(start:0,origin:SWITCH_SEARCH_VERTICAL,query:(keywords:" + str(company) + ",flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(COMPANIES))),includeFiltersInResponse:false))&&queryId=voyagerSearchDashClusters.8456d8ebf04d20b152309b0c7cfabee2"
-            req = linkedinSession.get("https://www.linkedin.com/voyager/api/graphql?" + query, verify=False, proxies=proxies)
-            jsonObject = json.loads(req.content.decode())
+        query = "includeWebMetadata=true&variables=(start:0,origin:SWITCH_SEARCH_VERTICAL,query:(keywords:" + str(company) + ",flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(COMPANIES))),includeFiltersInResponse:false))&&queryId=voyagerSearchDashClusters.8456d8ebf04d20b152309b0c7cfabee2"
+        req = linkedinSession.get("https://www.linkedin.com/voyager/api/graphql?" + query, verify=False, proxies=proxies)
+        jsonObject = json.loads(req.content.decode())
 
-            for companyObject in jsonObject["included"]:
-                try:
-                    id = companyObject["trackingUrn"].split(":")[3]
-                    companyname = companyObject["title"]["text"]
-                    print("{:.<55}: {:s}".format(companyname + " ",id))
-                except:
-                    pass
+        for companyObject in jsonObject["included"]:
+            try:
+                id = companyObject["trackingUrn"].split(":")[3]
+                companyname = companyObject["title"]["text"]
+                print("{:.<55}: {:s}".format(companyname + " ",id))
+            except:
+                pass
 
-            companyid = input("\nSelect company ID value: ")  
+        companyid = input("\nSelect company ID value: ")  
 
-        employeeSearchQuery = "/voyager/api/graphql?variables=(start:0,origin:COMPANY_PAGE_CANNED_SEARCH,query:(flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:currentCompany,value:List(" + str(companyid) + ")),(key:resultType,value:List(PEOPLE))),includeFiltersInResponse:false))&&queryId=voyagerSearchDashClusters.c4f33252de52295107ac12f946d34b0d"
-        employeeSearchRequest = linkedinSession.get("https://www.linkedin.com" + employeeSearchQuery, verify=False, proxies=proxies)
-        jsonUserListObject = json.loads(employeeSearchRequest.content.decode())
-
+    employeeSearchQuery = "/voyager/api/graphql?variables=(start:0,origin:COMPANY_PAGE_CANNED_SEARCH,query:(flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:currentCompany,value:List(" + str(companyid) + ")),(key:resultType,value:List(PEOPLE))),includeFiltersInResponse:false))&&queryId=voyagerSearchDashClusters.c4f33252de52295107ac12f946d34b0d"
+    employeeSearchRequest = linkedinSession.get("https://www.linkedin.com" + employeeSearchQuery, verify=False, proxies=proxies)
+    jsonUserListObject = json.loads(employeeSearchRequest.content.decode())
+    metadata = jsonUserListObject.get("data", {}).get("data", {}).get("searchDashClustersByAll", {}).get("metadata", {})
+    if not metadata:
+        logger.error("Failed to pull employee count, attempting to continue anyways...")
         count = 0
-        count = jsonUserListObject["data"]["data"]["searchDashClustersByAll"]["metadata"]["totalResultCount"]
-        logger.info("Found {:d} possible employees".format(count))
+    else:
+        count = metadata.get("totalResultCount", 0)
+        
+    logger.info("Found {:d} possible employees".format(count))
+    
+    with alive_bar(count, title="Processing Company Employees", enrich_print=False) as bar:
+        for countNum in range(0,int((int(math.ceil(count / 10.0)) * 10) / 10)):
+            try:
+                pageQuery = "/voyager/api/graphql?variables=(start:" + str(countNum * 10) + ",origin:COMPANY_PAGE_CANNED_SEARCH,query:(flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:currentCompany,value:List(" + str(companyid) + ")),(key:resultType,value:List(PEOPLE))),includeFiltersInResponse:false))&&queryId=voyagerSearchDashClusters.c4f33252de52295107ac12f946d34b0d"
+                pageRequest = linkedinSession.get("https://www.linkedin.com" + pageQuery, verify=False, proxies=proxies)
+                jsonUserContent = json.loads(pageRequest.content.decode())
+                for person in jsonUserContent["included"]:
+                    if "title" in person:
+                        url = person['navigationContext']['url']
+                        nameField = person['title']['text']
+                        if "," in nameField:
+                            cleanNameField = nameField.split(",")[0]
+                            first_name = cleanNameField.split(" ")[0]
+                            last_name = cleanNameField.split(" ")[-1]
+                        else:
+                            first_name = nameField.split(" ")[0]
+                            last_name = nameField.split(" ")[-1]
 
-        with yaspin.yaspin(text=" - Running LinkedIn Employee Enumeration   "):
-            for countNum in range(0,int((int(math.ceil(count / 10.0)) * 10) / 10)):
-                try:
-                    pageQuery = "/voyager/api/graphql?variables=(start:" + str(countNum * 10) + ",origin:COMPANY_PAGE_CANNED_SEARCH,query:(flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:currentCompany,value:List(" + str(companyid) + ")),(key:resultType,value:List(PEOPLE))),includeFiltersInResponse:false))&&queryId=voyagerSearchDashClusters.c4f33252de52295107ac12f946d34b0d"
-                    pageRequest = linkedinSession.get("https://www.linkedin.com" + pageQuery, verify=False, proxies=proxies)
-                    jsonUserContent = json.loads(pageRequest.content.decode())
-                    for person in jsonUserContent["included"]:
-                        if "title" in person:
-                            url = person['navigationContext']['url']
-                            nameField = person['title']['text']
-                            if "," in nameField:
-                                cleanNameField = nameField.split(",")[0]
-                                first_name = cleanNameField.split(" ")[0]
-                                last_name = cleanNameField.split(" ")[-1]
+                        if len(first_name) <= 1 or len(last_name) <= 1:
+                            pass
+                        elif "LinkedIn" in first_name:
+                            pass
+                        elif "." in last_name:
+                            pass
+                        elif "." in first_name:
+                            pass
+                        else:
+                            full_name = (first_name.capitalize() + " " + last_name.capitalize())
+                            if full_name.startswith("."):
+                                pass
                             else:
-                                first_name = nameField.split(" ")[0]
-                                last_name = nameField.split(" ")[-1]
+                                fsdurn = url.split('%3A')[-1]
+                                logger.debug(f'Found User: {full_name} - URN: {fsdurn}')
+                                linkedinEmployeeList.append(f'{full_name},{fsdurn}')
+                        bar()
+            except Exception as e:
+                logger.error(f'Error in employee search: {e}')
+                bar()
+                pass
+            time.sleep(sleep/2)
+    print ('\n')
+    
+    with alive_bar(len(linkedinEmployeeList), title="Parsing Employment Details", enrich_print=False) as bar2:
+        for employee in linkedinEmployeeList:
+            Full_Name, fsdurn = employee.split(',')
+            try:
+                req = linkedinSession.get(f"https://www.linkedin.com/voyager/api/graphql?includeWebMetadata=false&variables=(profileUrn:urn%3Ali%3Afsd_profile%3A{fsdurn},sectionType:experience,locale:en_US)&queryId=voyagerIdentityDashProfileComponents.7f5e16224b53da3d4b722ed8f8f5fbf8", verify=False, allow_redirects=True)
+                data = json.loads(req.content.decode('utf=8'))
 
-                            if len(first_name) <= 1 or len(last_name) <= 1:
-                                pass
-                            elif "LinkedIn" in first_name:
-                                pass
-                            elif "." in last_name:
-                                pass
-                            elif "." in first_name:
-                                pass
-                            else:
-                                full_name = (first_name.capitalize() + " " + last_name.capitalize())
-                                if full_name.startswith("."):
-                                    pass
-                                else:
-                                    fsdurn = url.split('%3A')[-1]
-                                    logger.debug(f'Found User: {full_name}')
-                                    linkedinEmployeeList.append(f'{full_name},{fsdurn}')
+            except Exception as e:
+                logger.error(f'LinkedIn Employee Info Exception for {Full_Name}: {e}')
+                bar2()
+                continue
+            
+            dataDic = {}
+            employeeExperiences = get_profile_experiences(data)
+            if employeeExperiences:
+                logger.debug(f'Found {len(employeeExperiences)} job profiles for {Full_Name}')
+                if Full_Name not in dataDic:
+                    dataDic[Full_Name] = []
+                for jobProfile in employeeExperiences:
+                    dataDic[Full_Name].append({"Job_Title": jobProfile.get("title", "N/A"),"Company": jobProfile.get("companyName", "N/A") or "N/A","Duration": jobProfile.get("duration", "N/A") or "N/A"})
+                    
+            for employee_name, jobs in dataDic.items():
+                for idx, job in enumerate(jobs):
+                    flattened_data.append({"Full_Name": employee_name if idx == 0 else "","Job Title": job["Job_Title"],"Current Company": job["Company"],"Duration at Company": job["Duration"]})
+            time.sleep(sleep/2)
+            bar2()
+    return flattened_data
 
-                        time.sleep(sleep/2)
+def get_profile_experiences(json_data):
+    def parse_item(item, is_group_item=False):
+        component = item["components"]["entityComponent"]
+        title = component["titleV2"]["text"]["text"]
+        subtitle = component["subtitle"]
+        company = subtitle["text"].split(" · ")[0] if subtitle else None
+        employment_type_parts = subtitle["text"].split(" · ") if subtitle else None
+        employment_type = (employment_type_parts[1] if employment_type_parts and len(employment_type_parts) > 1 else None)
+        metadata = component.get("metadata", {}) or {}
+        location = metadata.get("text")
 
-                except Exception as linkedinuserexception:
-                    logger.debug(f"Employee Search Module Exception for {full_name}: {linkedinuserexception}")
-                    pass
+        if (component is not None and "caption" in component and component["caption"] is not None and "text" in component["caption"] and component["caption"]["text"] is not None):
+            duration_text = component["caption"]["text"]
+        else:
+            duration_text = None
 
-        with yaspin.yaspin(text=" - Running Employee Job Enumeration   "):
-            for employee in linkedinEmployeeList:
-                try:
-                    full_name, fsdurn = employee.split(',')
-                    req = linkedinSession.get(f'https://www.linkedin.com/voyager/api/graphql?includeWebMetadata=true&variables=(profileUrn:urn%3Ali%3Afsd_profile%3A{fsdurn})&queryId=voyagerIdentityDashProfileCards.5419d81edf3eff3d1f4fb2cb5b6c8104', verify=False, proxies=proxies)
-                    response_content = req.content.decode('utf=8')
-                    jsonJobData = json.loads(response_content)
-                    job_title, companyname, length = parseProfileData(full_name,jsonJobData)
-                    logger.debug(f'{full_name} -- {job_title} at {companyname} for {length}')
-                    linkedinEmployeeInfo.append(f'{full_name} -- {job_title} at {companyname} for {length}')
-                    time.sleep(sleep/2)
-                except json.JSONDecodeError:
-                    logger.debug(f"JSON Decode Error for {full_name}")
-                    pass
-                except Exception as linkedinuserexception:
-                    logger.debug(f"Job Search Module Exception for {full_name}: {linkedinuserexception}")
-                    pass
-                
-    except Exception as linkedinexception:
-        logger.error(f"LinkedIn module exception: {linkedinexception}")
+        if duration_text is not None:
+            duration_parts = duration_text.split(" · ")
+            date_parts = duration_parts[0].split(" - ")
+
+            duration = (duration_parts[1] if duration_parts and len(duration_parts) > 1 else None)
+            start_date = date_parts[0] if date_parts else None
+            end_date = date_parts[1] if date_parts and len(date_parts) > 1 else None
+        else:
+            duration = start_date = end_date = "N/A"
+
+        sub_components = component["subComponents"]
+        fixed_list_component = (sub_components["components"][0]["components"]["fixedListComponent"] if sub_components else None)
+        fixed_list_text_component = (fixed_list_component["components"][0]["components"]["textComponent"] if fixed_list_component else None)
+        description = (fixed_list_text_component["text"]["text"] if fixed_list_text_component else None)
+
+        parsed_data = {
+            "title": title,
+            "companyName": company if not is_group_item else None,
+            "employmentType": company if is_group_item else employment_type,
+            "locationName": location,
+            "duration": duration,
+            "startDate": start_date,
+            "endDate": end_date,
+            "description": description,
+        }
+        
+        return parsed_data
+
+    def get_grouped_item_id(item):
+        sub_components = item["components"]["entityComponent"]["subComponents"]
+        sub_components_components = (sub_components["components"][0]["components"] if sub_components else None)
+        paged_list_component_id = (sub_components_components.get("*pagedListComponent", "") if sub_components_components else None)
+        if (paged_list_component_id and "fsd_profilePositionGroup" in paged_list_component_id):
+            pattern = r"urn:li:fsd_profilePositionGroup:\([A-z0-9]+,[A-z0-9]+\)"
+            match = re.search(pattern, paged_list_component_id)
+            return match.group(0) if match else None
+
+    data2 = json_data
+    items = []
+    try:
+        for item in data2["included"][0]["components"]["elements"]:
+            grouped_item_id = get_grouped_item_id(item)
+            if grouped_item_id:
+                component = item["components"]["entityComponent"]
+                company = component["titleV2"]["text"]["text"]
+
+                location = (component["caption"]["text"] if component["caption"] else None)
+
+                group = [i for i in data2["included"] if grouped_item_id in i.get("entityUrn", "")]
+                if not group:
+                    continue
+                for group_item in group[0]["components"]["elements"]:
+                    parsed_data = parse_item(group_item, is_group_item=True)
+                    parsed_data["companyName"] = company
+                    parsed_data["locationName"] = location
+                    if parsed_data["endDate"] == "Present":
+                        items.append(parsed_data)
+                continue
+
+            parsed_data = parse_item(item)
+            if parsed_data["endDate"] == "Present":
+                items.append(parsed_data)
+    except Exception as e:
+        logger.error(f'Error in parsing experiences: {e}')
         pass
-        #sys.exit()
-	
+
+    return items
+                
 def main_generator():
     global outputfile
 
@@ -300,27 +328,27 @@ def main_generator():
             else:
                 logger.error("Not a valid option, exiting...")
                 sys.exit()
-                
-    jobspiGen(companyid)
-    
-    linkedinEmployeeInfoUniq = list(set(linkedinEmployeeInfo))
-    totalUsersInList = int(len(linkedinEmployeeInfoUniq))
-
-    if totalUsersInList == 0:
-        logger.error('No names obtained, Exiting...')
+        
+    all_employee_data = jobspiGen(companyid)
+    if not all_employee_data:
+        logger.error("No employee data found, exiting...")
         sys.exit()
+    
+    df = pd.DataFrame(all_employee_data)
 
     if outputfile != '':
         with open(outputfile, mode='wt', encoding='utf-8') as writeOutFile:
-            writeOutFile.write('\n'.join(linkedinEmployeeInfoUniq))
+            writeOutFile.write(tabulate(df, headers='keys', tablefmt='fancy_grid', showindex=False))
+            logger.info(f'Output written to {outputfile}')
+        if outputCSV:
+            csvFileName = outputfile + '.csv'
+            df.to_csv(csvFileName, index=False)
+            logger.info(f'Output CSV written to {csvFileName}')
 
     if printnames:
         print('\n')
-        for i in list(linkedinEmployeeInfoUniq):
-            logger.info(str(i))
+        logger.info("\n" + tabulate(df, headers='keys', tablefmt='fancy_grid', showindex=False))
         print('\n')
-
-    logger.info(f'Found a total of {totalUsersInList} potential users')
 
 if __name__ == "__main__":
     main_generator()
