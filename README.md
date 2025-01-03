@@ -1,14 +1,14 @@
-# JobSpi
+# JobSpi v0.5
 
-- This is the initial release and more or less a 'beta' version. Cleaning up the script and output is on the TODO list, as well as more parsing to accuratly get data for identified users. The JSON is a little crazy so taking some time.
+- The v0.5 update has increased accuracy, parsing better and getting more results. I dont have exact numbers but im seeing over 60 extra returns compared to the .3 version. Any company an employee is currently working for (i.e. end date is "Present") will be listed. Ive also included a CSV output option, and a clean/pretty table output (this prints the pretty table in the output (-o) and terminal (-pn))  
 
-- The script will ask for options when you dont supply any. This includes that password field, which wont show when typing, and thus is better for screenshots and evidence gathering.
+- The script will ask for required options when you dont supply any. This includes that password field, which wont show when typing, and thus is better for screenshots and evidence gathering.
 
-- Please mark any issues in the proper github way and ill attempt to address them.
+- Please mark any issues in the proper github way and ill attempt to address them. Im working on streamlining things with a linkedin API, but linkedin JSON is horrible and even the API's are having trouble handeling it.
 
 - The system you are running this script from needs to have successfully logged into LinkedIn via web browser with the account you are using. 
 
-- LinkedIn does throttle the amount of login attempts, so running this multiple times may get you throtteled and unable to execute for 24 hours.
+- LinkedIn does throttle the amount of login attempts (generally 10-15), so running this multiple times may get you throtteled and unable to execute for 24 hours.
 
 ------------------------------------------------------------------------------------
 
@@ -22,10 +22,10 @@ $ python3 JobSpi.py -h
     |   |/  _ \| __ \ \____  \   _ \|  |
 /\__|   (  (_) ) \_\ \/       \ |_) |  |
 \_______|\____/|___  /______  /  __/|__|
-   v0.3            \/       \/|_|
+   v0.5            \/       \/|_|
         Author: #Waffl3ss
 
-usage: JobSpi.py [-h] [-c COMPANY] [-u LINKEDIN_USERNAME] [-p LINKEDIN_PASSWORD] [-o OUTPUTFILE] [-pn] [-id COMPANYID] [--sleep SLEEP] [--timeout TIMEOUT] [--logretry LOGINRETRYAMOUNT] [--secretry LINKEDINRETRYAMOUNT] [--debug] [--proxy PROXY]
+usage: JobSpi copy.py [-h] [-c COMPANY] [-u LINKEDIN_USERNAME] [-p LINKEDIN_PASSWORD] [-o OUTPUTFILE] [-pn] [-id COMPANYID] [--sleep SLEEP] [--timeout TIMEOUT] [--logretry LOGINRETRYAMOUNT] [--secretry LINKEDINRETRYAMOUNT] [--debug] [--proxy PROXY] [--csv]
 
 options:
   -h, --help            show this help message and exit
@@ -43,5 +43,6 @@ options:
                         Amount of times to attempt the LinkedIn Security bypass
   --debug               Turn on debug mode for error output
   --proxy PROXY         Proxy to use for requests
+  --csv                 Output to CSV file
 
 ```
