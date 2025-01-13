@@ -171,29 +171,13 @@ def jobspiGen(companyid):
                         url = person['navigationContext']['url']
                         nameField = person['title']['text']
                         if "," in nameField:
-                            cleanNameField = nameField.split(",")[0]
-                            first_name = cleanNameField.split(" ")[0]
-                            last_name = cleanNameField.split(" ")[-1]
-                        else:
-                            first_name = nameField.split(" ")[0]
-                            last_name = nameField.split(" ")[-1]
-
-                        if len(first_name) <= 1 or len(last_name) <= 1:
-                            pass
-                        elif "LinkedIn" in first_name:
-                            pass
-                        elif "." in last_name:
-                            pass
-                        elif "." in first_name:
+                            nameField = nameField.replace(",","")
+                        if "LinkedIn" in nameField.split(" ")[0]:
                             pass
                         else:
-                            full_name = (first_name.capitalize() + " " + last_name.capitalize())
-                            if full_name.startswith("."):
-                                pass
-                            else:
-                                fsdurn = url.split('%3A')[-1]
-                                logger.debug(f'Found User: {full_name} - URN: {fsdurn}')
-                                linkedinEmployeeList.append(f'{full_name},{fsdurn}')
+                            fsdurn = url.split('%3A')[-1]
+                            logger.debug(f'Found User: {nameField} - URN: {fsdurn}')
+                            linkedinEmployeeList.append(f'{nameField},{fsdurn}')
                         bar()
             except Exception as e:
                 logger.error(f'Error in employee search: {e}')
