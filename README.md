@@ -1,6 +1,7 @@
 # JobSpi v0.5
 
 ### I have been learning Go and created a Go version that contains NameSpi as well as JobSpi all in one package. You can find SpiSuite [HERE](https://github.com/waffl3ss/SpiSuite)
+### (Meaning this one wont get updates anymore, and will go to archived status eventually)
 
 - The v0.5 update has increased accuracy, parsing better and getting more results. I dont have exact numbers but im seeing over 60 extra returns compared to the .3 version. Any company an employee is currently working for (i.e. end date is "Present") will be listed. Ive also included a CSV output option, and a clean/pretty table output (this prints the pretty table in the output (-o) and terminal (-pn))  
 
